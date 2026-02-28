@@ -59,3 +59,6 @@ To see the tool in action without writing your own code:
 1. **Theme Toggle:** Use the 🌓 icon in the header to switch between Light and Dark modes based on your environment.
 2. **File Upload:** Instead of copy-pasting, click the 📂 Load button to import large .sql files directly.
 3. **Scroll Sync:** Scroll either pane; the sibling pane will automatically stay aligned to ensure you're looking at the same block of code.
+
+## 📄 License
+Distributed under the MIT License. See **LICENSE** for more information.
