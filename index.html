@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Professional SQL Side-by-Side Diff</title>
+    <style>
+        :root {
+            --bg: #ffffff; --text: #333; --border: #ddd;
+            --added: #e6ffec; --removed: #ffeef0; --header: #f6f8fa;
+            --empty: #fafafa; --accent: #0969da;
+        }
+        [data-theme="dark"] {
+            --bg: #0d1117; --text: #c9d1d9; --border: #30363d;
+            --added: #112616; --removed: #3c1618; --header: #161b22;
+            --empty: #090c10;
+        }
+
+        body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+        header { padding: 10px 20px; background: var(--header); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; z-index: 100; }
+        
+        .btn-group { display: flex; gap: 8px; }
+        button, label { padding: 6px 12px; cursor: pointer; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 13px; transition: 0.2s; }
+        button:hover { filter: brightness(0.9); }
+        input[type="file"] { display: none; }
+
+        .main-container { display: flex; flex: 1; overflow: hidden; position: relative; }
+        .pane { flex: 1; display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--border); }
+        
+        .pane-header { padding: 8px; font-size: 11px; font-weight: bold; background: var(--header); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; }
+        
+        /* Sync Scroll Areas */
+        .content-area { flex: 1; overflow-y: auto; overflow-x: auto; display: flex; flex-direction: column; }
+        textarea { flex: 1; padding: 15px; font-family: 'Consolas', monospace; font-size: 13px; border: none; resize: none; outline: none; background: transparent; color: inherit; white-space: pre; }
+
+        /* Diff Styling */
+        .diff-view { display: none; flex-direction: row; flex: 1; overflow: hidden; }
+        .diff-pane { flex: 1; overflow-y: scroll; font-family: 'Consolas', monospace; font-size: 13px; line-height: 1.5; }
+        .diff-pane::-webkit-scrollbar { width: 8px; height: 8px; }
+        
+        .line { display: flex; min-height: 1.5em; white-space: pre-wrap; padding: 0 10px; border-bottom: 1px solid transparent; }
+        .line-num { width: 35px; color: #888; font-size: 10px; user-select: none; border-right: 1px solid var(--border); margin-right: 10px; text-align: right; padding-right: 5px; }
+        
+        .added { background-color: var(--added); }
+        .removed { background-color: var(--removed); }
+        .empty-line { background-color: var(--empty); }
+        .active-nav { outline: 2px solid var(--accent); outline-offset: -2px; }
+    </style>
+</head>
+<body data-theme="dark">
+
+<header>
+    <div class="btn-group">
+        <strong>SQL DIFF PRO</strong>
+        <button onclick="toggleTheme()">🌓 Theme</button>
+    </div>
+    <div class="btn-group">
+        <button id="btn-edit" onclick="showEditor()" style="display:none">Back to Edit</button>
+        <button id="btn-compare" onclick="compareSQL()" style="background:var(--accent); color:white; border:none;">Compare Side-by-Side</button>
+    </div>
+    <div class="btn-group">
+        <button onclick="navigateDiff(-1)">Prev Change</button>
+        <button onclick="navigateDiff(1)">Next Change</button>
+    </div>
+</header>
+
+<div class="main-container" id="editor-ui">
+    <div class="pane">
+        <div class="pane-header">ORIGINAL <label>📂 Load<input type="file" onchange="loadFile(this, 'sql-a')"></label></div>
+        <textarea id="sql-a" spellcheck="false" placeholder="Paste SQL A..."></textarea>
+    </div>
+    <div class="pane">
+        <div class="pane-header">MODIFIED <label>📂 Load<input type="file" onchange="loadFile(this, 'sql-b')"></label></div>
+        <textarea id="sql-b" spellcheck="false" placeholder="Paste SQL B..."></textarea>
+    </div>
+</div>
+
+<div class="main-container diff-view" id="diff-ui">
+    <div class="diff-pane" id="left-diff" onscroll="syncScroll(this, 'right-diff')"></div>
+    <div class="diff-pane" id="right-diff" onscroll="syncScroll(this, 'left-diff')"></div>
+</div>
+
+<script>
+    let diffIndices = [];
+    let currentIdx = -1;
+
+    function toggleTheme() {
+        document.body.dataset.theme = document.body.dataset.theme === 'light' ? 'dark' : 'light';
+    }
+
+    function loadFile(input, id) {
+        const reader = new FileReader();
+        reader.onload = (e) => document.getElementById(id).value = e.target.result;
+        reader.readAsText(input.files[0]);
+    }
+
+    function showEditor() {
+        document.getElementById('editor-ui').style.display = 'flex';
+        document.getElementById('diff-ui').style.display = 'none';
+        document.getElementById('btn-edit').style.display = 'none';
+        document.getElementById('btn-compare').style.display = 'block';
+    }
+
+    function syncScroll(source, targetId) {
+        const target = document.getElementById(targetId);
+        target.scrollTop = source.scrollTop;
+        target.scrollLeft = source.scrollLeft;
+    }
+
+    function compareSQL() {
+        const a = document.getElementById('sql-a').value.split('\n');
+        const b = document.getElementById('sql-b').value.split('\n');
+        const left = document.getElementById('left-diff');
+        const right = document.getElementById('right-diff');
+        
+        left.innerHTML = ''; right.innerHTML = '';
+        diffIndices = []; currentIdx = -1;
+
+        // Basic Longest Common Subsequence or simple line-mapping
+        // For this UI tool, we use a simple comparison logic:
+        let i = 0, j = 0;
+        let lineCount = 0;
+
+        while (i < a.length || j < b.length) {
+            const lineA = a[i];
+            const lineB = b[j];
+
+            if (lineA === lineB) {
+                appendLine(left, lineA, i + 1, 'unchanged');
+                appendLine(right, lineB, j + 1, 'unchanged');
+                i++; j++;
+            } else {
+                // Determine if it's a deletion, addition, or change
+                // (Using a simplified lookahead for better alignment)
+                diffIndices.push(lineCount);
+                if (lineA !== undefined && (lineB === undefined || a.indexOf(lineB, i) > b.indexOf(lineA, j) || !b.includes(lineA, j))) {
+                    appendLine(left, lineA, i + 1, 'removed');
+                    appendLine(right, '', '', 'empty-line');
+                    i++;
+                } else {
+                    appendLine(left, '', '', 'empty-line');
+                    appendLine(right, lineB, j + 1, 'added');
+                    j++;
+                }
+            }
+            lineCount++;
+        }
+
+        document.getElementById('editor-ui').style.display = 'none';
+        document.getElementById('diff-ui').style.display = 'flex';
+        document.getElementById('btn-edit').style.display = 'block';
+        document.getElementById('btn-compare').style.display = 'none';
+    }
+
+    function appendLine(container, text, num, type) {
+        const div = document.createElement('div');
+        div.className = `line ${type}`;
+        div.innerHTML = `<span class="line-num">${num}</span><span class="txt">${text.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</span>`;
+        container.appendChild(div);
+    }
+
+    function navigateDiff(dir) {
+        if (diffIndices.length === 0) return;
+        
+        // Clear old highlight
+        const linesL = document.getElementById('left-diff').children;
+        const linesR = document.getElementById('right-diff').children;
+        if (currentIdx !== -1) {
+            linesL[diffIndices[currentIdx]].classList.remove('active-nav');
+            linesR[diffIndices[currentIdx]].classList.remove('active-nav');
+        }
+
+        currentIdx = (currentIdx + dir + diffIndices.length) % diffIndices.length;
+        const targetLine = diffIndices[currentIdx];
+        
+        linesL[targetLine].classList.add('active-nav');
+        linesR[targetLine].classList.add('active-nav');
+        linesL[targetLine].scrollIntoView({ block: 'center' });
+    }
+</script>
+</body>
+</html>
